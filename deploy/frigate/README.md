@@ -28,6 +28,9 @@ checks, 2 min between alerts of the same kind); tune in `backend/.env`.
 
 ## Setup
 
+> **Windows PC or no NVIDIA graphics card?** Follow [SETUP_WINDOWS.md](../../SETUP_WINDOWS.md) instead;
+> it uses the files in `windows/`.
+
 Needs Ubuntu with an NVIDIA GPU (16 GB recommended), the NVIDIA driver, Docker and the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
 

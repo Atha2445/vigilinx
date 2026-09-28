@@ -277,3 +277,44 @@ def test_verifier_garbage_answer_abstains(monkeypatch):
     res = ov.OllamaVerifier(base_url="http://x", model="qwen3-vl:4b").verify(
         [np.zeros((10, 10, 3), np.uint8)], "fight_verify")
     assert res["success"] is False
+
+
+# ---- CPU tuning settings --------------------------------------------------------
+
+def test_cpu_settings_from_env(monkeypatch):
+    monkeypatch.setenv("BRIDGE_VERIFY_FRAMES", "3")
+    monkeypatch.setenv("OLLAMA_TIMEOUT", "300")
+    monkeypatch.setenv("OLLAMA_IMAGE_SIZE", "512")
+    assert BridgeConfig.from_env().verify_frames == 3
+    v = ov.OllamaVerifier(base_url="http://x")
+    assert v.timeout == 300.0 and v.image_size == 512
+
+
+def test_verify_frames_setting_limits_frames_sent(tmp_path):
+    verifier = FakeVerifier(CONFIRM)
+    b, _ = bridge(FakeEngine("FIGHT_ASSAULT"), verifier, tmp_path, verify_frames=3)
+    b.process_job(Job("gate", "FIGHT", 1000.0, []))
+    assert verifier.calls[0][0] == 3
+
+
+def test_single_verify_frame_uses_peak(tmp_path):
+    verifier = FakeVerifier(CONFIRM)
+    b, _ = bridge(FakeEngine("FIGHT_ASSAULT"), verifier, tmp_path, verify_frames=1)
+    b.process_job(Job("gate", "FIGHT", 1000.0, []))
+    assert verifier.calls[0][0] == 1
+
+
+def test_image_size_setting_shrinks_frames(monkeypatch):
+    import base64 as b64
+    sent = {}
+    monkeypatch.setattr(ov.httpx, "get", lambda url, timeout: _Resp({"models": [{"name": "qwen3-vl:4b"}]}))
+
+    def fake_post(url, json, timeout):
+        sent.update(json, timeout=timeout)
+        return _Resp({"message": {"content": '{"confirmed": false, "confidence": 0.9, "description": "calm"}'}})
+
+    monkeypatch.setattr(ov.httpx, "post", fake_post)
+    v = ov.OllamaVerifier(base_url="http://x", model="qwen3-vl:4b", timeout=300, image_size=512)
+    v.verify([np.zeros((1080, 1920, 3), np.uint8)], "fight_verify")
+    img = cv2.imdecode(np.frombuffer(b64.b64decode(sent["messages"][0]["images"][0]), np.uint8), cv2.IMREAD_COLOR)
+    assert max(img.shape[:2]) == 512 and sent["timeout"] == 300

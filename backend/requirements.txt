@@ -12,6 +12,5 @@ watchdog>=3.0.0
 httpx>=0.28.1
 PyJWT>=2.8,<3
 ultralytics>=8.1.0
-llama-cpp-python>=0.2.56
 certifi
 paho-mqtt>=2.0,<3

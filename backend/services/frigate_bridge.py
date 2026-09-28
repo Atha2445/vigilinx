@@ -86,6 +86,7 @@ class BridgeConfig:
     min_confidence: float = 0.5       # Ollama confidence needed to confirm
     alert_when_unverified: bool = True
     min_moving_people_for_fight: int = 2
+    verify_frames: int = 6            # frames sent to Ollama per check (fewer = faster on CPU)
     output_dir: str = field(default_factory=lambda: tempfile.gettempdir())
 
     @classmethod
@@ -99,6 +100,7 @@ class BridgeConfig:
         c.alert_cooldown = float(os.getenv("BRIDGE_ALERT_COOLDOWN", c.alert_cooldown))
         c.min_confidence = float(os.getenv("BRIDGE_MIN_CONFIDENCE", c.min_confidence))
         c.alert_when_unverified = _env_bool("BRIDGE_ALERT_WHEN_UNVERIFIED", c.alert_when_unverified)
+        c.verify_frames = max(1, int(os.getenv("BRIDGE_VERIFY_FRAMES", c.verify_frames)))
         if output_dir:
             c.output_dir = output_dir
         return c
@@ -380,7 +382,7 @@ class FrigateBridge:
                 return {"status": "clear"}
 
             self.stats["detector_hits"] += 1
-            seq, best = self._verification_frames(hits.get(threat, []), frames)
+            seq, best = self._verification_frames(hits.get(threat, []), frames, self.cfg.verify_frames)
             clip_seconds = (len(frames) / self.cfg.analysis_fps) if frames else None
             verdict = self.verifier.verify([f for _, f in seq], THREAT_CONTEXT.get(threat, "security_audit"),
                                            clip_seconds=clip_seconds)
@@ -487,7 +489,10 @@ class FrigateBridge:
         else:
             peak_idx, annotated = len(frames) // 2, None
         lo, hi = max(0, peak_idx - 10), min(len(frames) - 1, peak_idx + 10)
-        idxs = sorted({int(round(lo + k * (hi - lo) / max(1, n - 1))) for k in range(n)})
+        if n == 1:
+            idxs = [peak_idx]
+        else:
+            idxs = sorted({int(round(lo + k * (hi - lo) / (n - 1))) for k in range(n)})
         best = annotated if annotated is not None else frames[peak_idx]
         return [(i, frames[i]) for i in idxs], best
 

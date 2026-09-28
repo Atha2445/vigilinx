@@ -113,10 +113,13 @@ def _parse(text: str) -> Optional[Dict[str, Any]]:
 
 class OllamaVerifier:
     def __init__(self, base_url: Optional[str] = None, model: Optional[str] = None,
-                 timeout: float = 90.0):
+                 timeout: Optional[float] = None, image_size: Optional[int] = None):
         self.base_url = (base_url or os.getenv("OLLAMA_URL", DEFAULT_URL)).rstrip("/")
         self.model = model or os.getenv("OLLAMA_VISION_MODEL", DEFAULT_MODEL)
-        self.timeout = timeout
+        # On a CPU-only PC a check can take minutes: raise OLLAMA_TIMEOUT and
+        # lower OLLAMA_IMAGE_SIZE (see deploy/frigate/windows/README.md).
+        self.timeout = timeout if timeout is not None else float(os.getenv("OLLAMA_TIMEOUT", "90"))
+        self.image_size = image_size if image_size is not None else int(os.getenv("OLLAMA_IMAGE_SIZE", "768"))
         self._available: Optional[bool] = None
         self._checked_at = 0.0
 
@@ -166,7 +169,7 @@ class OllamaVerifier:
             "messages": [{
                 "role": "user",
                 "content": prompt,
-                "images": [_encode(f) for f in frames],
+                "images": [_encode(f, self.image_size) for f in frames],
             }],
         }
         try:
