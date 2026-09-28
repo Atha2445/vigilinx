@@ -469,6 +469,15 @@ class EvidenceAuditor:
         ),
     }
 
+    # Visual descriptions for the X-CLIP fallback (it matches what is visible,
+    # not instructions; see README_DETECTION.md).
+    XCLIP_SCENES = {
+        "weapon_verify": "a person holding a gun or knife",
+        "fight_verify": "people punching and fighting each other",
+        "fire_verify": "fire and smoke",
+        "animal_assault_verify": "a dog attacking and biting a person",
+    }
+
     def __init__(self):
         self._kimi = get_kimi_vl()
 
@@ -517,8 +526,12 @@ class EvidenceAuditor:
         """Automatic fallback to X-CLIP zero-shot visual-textual similarity when Kimi-VL is unavailable."""
         try:
             xclip = XCLIPProvider()
+            xclip._load_model()
+            if xclip.model is None:
+                return self._heuristic_fallback(frame, prompt)
+            scene = self.XCLIP_SCENES.get(context_type, prompt)
             prompts = [
-                f"a security surveillance photo showing {prompt}",
+                f"a security surveillance photo showing {scene}",
                 "a security surveillance photo of completely normal peaceful routine activity"
             ]
             probs = xclip.analyze([frame], prompts)
@@ -535,7 +548,9 @@ class EvidenceAuditor:
                 f"Status: {status}. Visual alignment indicates normal baseline activity."
             )
             return {
-                "success": True,
+                # X-CLIP on a single frame is too weak to overrule the detectors,
+                # so it can confirm a threat but only abstains otherwise.
+                "success": is_threat,
                 "prompt": prompt,
                 "reasoning": reasoning,
                 "verified_threat": is_threat,
@@ -751,12 +766,15 @@ class EvidenceAuditor:
         )
 
         return {
-            "success": True,
             "prompt": prompt,
             "reasoning": reasoning,
             "verified_threat": False,
-            "confidence": 0.80,
-            "model_used": "local-evidence-auditor"
+            "confidence": 0.0,
+            "model_used": "local-evidence-auditor",
+            # No real model ran, so this is an abstention. success=False makes the
+            # caller keep the detector's result instead of suppressing it.
+            "success": False,
+            "unavailable": True
         }
 
 
