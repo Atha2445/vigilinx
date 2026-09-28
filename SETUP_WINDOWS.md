@@ -114,7 +114,7 @@ You can now upload videos for analysis. The app keeps its data in `C:\Vigilinx`.
 From the `vigilinx` folder:
 
 ```powershell
-cd deploy\frigate\windows
+cd deploy\frigate\cpu
 copy .env.example .env
 notepad .env
 ```
@@ -212,6 +212,6 @@ You want to see `"enabled": true`, `"mqtt_connected": true` and, under `"verifie
 | Browser shows `{"detail":"Not Found"}` at localhost:8000 | The dashboard wasn't built: redo the `frontend` commands in Part 3. |
 | Logged out every time the app restarts | `JWT_SECRET_KEY` isn't set in `.env` (Part 3). |
 | `docker` is not recognized / engine not running | Open Docker Desktop and wait for *Engine running*. |
-| Status shows `"mqtt_connected": false` | Frigate isn't running: `cd deploy\frigate\windows` then `docker compose up -d`. |
+| Status shows `"mqtt_connected": false` | Frigate isn't running: `cd deploy\frigate\cpu` then `docker compose up -d`. |
 | Status shows `"available": false` under `"verifier"` | Open the Ollama app, and run `ollama pull qwen3-vl:4b`. |
 | `"clip_failures"` keeps rising | Recording isn't working: check the camera's `record` stream path in `config\config.yml`. |

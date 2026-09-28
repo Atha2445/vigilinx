@@ -2,7 +2,7 @@
 # config\model_cache\yolov9-t-320.onnx (the path config.yml expects).
 #
 # Same recipe as Frigate 0.18.0's docs, run through Docker Desktop.
-# Run once, in PowerShell, from deploy\frigate\windows:
+# Run once, in PowerShell, from deploy\frigate\cpu:
 #     powershell -ExecutionPolicy Bypass -File scripts\export_yolov9.ps1
 # Takes 5-15 minutes and needs internet. If you change the size or resolution,
 # update model.width/height/path in config\config.yml to match.

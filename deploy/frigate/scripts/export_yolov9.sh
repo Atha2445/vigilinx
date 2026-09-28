@@ -13,7 +13,7 @@ set -euo pipefail
 MODEL_SIZE="${MODEL_SIZE:-s}"
 IMG_SIZE="${IMG_SIZE:-640}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-OUT_DIR="$HERE/config/model_cache"
+OUT_DIR="${OUT_DIR:-$HERE/config/model_cache}"
 mkdir -p "$OUT_DIR"
 cd "$OUT_DIR"
 

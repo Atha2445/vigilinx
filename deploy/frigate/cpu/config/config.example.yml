@@ -1,4 +1,4 @@
-# Frigate config for a Windows PC WITHOUT a graphics card.
+# Frigate config for a PC WITHOUT a graphics card (Windows or Ubuntu).
 # Copy to config\config.yml and edit the cameras section.
 # Full reference: https://docs.frigate.video/configuration/reference
 #
