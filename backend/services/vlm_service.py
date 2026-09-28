@@ -489,8 +489,24 @@ class EvidenceAuditor:
     ) -> Dict[str, Any]:
         """
         Runs multi-modal evidence reasoning on a keyframe or alert snapshot.
-        Uses the local Kimi-VL model for fully offline inference.
+
+        Accepts one frame or a list of frames (a short sequence works much
+        better for fights and bites). Tries, in order: Ollama (local, multi-frame),
+        Kimi-VL (local, single frame), then fallbacks that can only confirm or
+        abstain, never reject.
         """
+        frames = list(frame_or_clip) if isinstance(frame_or_clip, (list, tuple)) else [frame_or_clip]
+        if not frames:
+            return self._heuristic_fallback(np.zeros((1, 1, 3), np.uint8), prompt)
+
+        from services.ollama_verifier import get_ollama_verifier
+        ollama = get_ollama_verifier()
+        o_res = ollama.verify(frames, context_type=context_type)
+        if o_res.get("success"):
+            return {"prompt": prompt, **o_res}
+
+        key_frame = frames[len(frames) // 2]
+
         # Build the full prompt: use the template if available, otherwise
         # wrap the user's custom prompt
         template = self.AUDIT_PROMPTS.get(context_type)
@@ -504,11 +520,11 @@ class EvidenceAuditor:
                 '"description": "your analysis"}'
             )
 
-        result = self._kimi.infer(frame_or_clip, full_prompt)
+        result = self._kimi.infer(key_frame, full_prompt)
 
         if result.get("error"):
             # Kimi-VL unavailable or failed — automatically fall back to X-CLIP
-            return self._xclip_fallback(frame_or_clip, prompt, context_type)
+            return self._xclip_fallback(key_frame, prompt, context_type)
 
         is_threat = result.get("confirmed", False)
 

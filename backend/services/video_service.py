@@ -725,7 +725,17 @@ class VideoService:
             for cand in vlm_audit_candidates:
                 ctx = context_map.get(cand["type"], "security_audit")
                 try:
-                    audit_res = self.audit_evidence(cand["frame"], context_type=ctx)
+                    # Give the verifier a short sequence around the peak, not one frame:
+                    # fights and bites are only recognisable as motion.
+                    seq = sorted(
+                        (c for c in candidates_by_type.get(cand["type"], [])
+                         if abs(c["timestamp_sec"] - cand["timestamp_sec"]) <= 3.0),
+                        key=lambda c: c["timestamp_sec"])
+                    if len(seq) > 6:
+                        step = len(seq) / 6.0
+                        seq = [seq[int(i * step)] for i in range(6)]
+                    frames = [c["frame"] for c in seq] or [cand["frame"]]
+                    audit_res = self.audit_evidence(frames, context_type=ctx)
                     is_threat = audit_res.get("verified_threat", False)
                     v_conf = audit_res.get("confidence", 0.0)
                     reasoning = audit_res.get("reasoning", "")
@@ -922,6 +932,8 @@ class VideoService:
             img = cv2.imread(frame_or_path)
         elif isinstance(frame_or_path, np.ndarray):
             img = frame_or_path
+        elif isinstance(frame_or_path, (list, tuple)) and frame_or_path:
+            img = list(frame_or_path)  # a short frame sequence
         else:
             raise ValueError("Invalid frame or image path provided for audit")
 
