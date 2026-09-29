@@ -469,6 +469,15 @@ class EvidenceAuditor:
         ),
     }
 
+    # Visual descriptions for the X-CLIP fallback (it matches what is visible,
+    # not instructions; see README_DETECTION.md).
+    XCLIP_SCENES = {
+        "weapon_verify": "a person holding a gun or knife",
+        "fight_verify": "people punching and fighting each other",
+        "fire_verify": "fire and smoke",
+        "animal_assault_verify": "a dog attacking and biting a person",
+    }
+
     def __init__(self):
         self._kimi = get_kimi_vl()
 
@@ -480,8 +489,24 @@ class EvidenceAuditor:
     ) -> Dict[str, Any]:
         """
         Runs multi-modal evidence reasoning on a keyframe or alert snapshot.
-        Uses the local Kimi-VL model for fully offline inference.
+
+        Accepts one frame or a list of frames (a short sequence works much
+        better for fights and bites). Tries, in order: Ollama (local, multi-frame),
+        Kimi-VL (local, single frame), then fallbacks that can only confirm or
+        abstain, never reject.
         """
+        frames = list(frame_or_clip) if isinstance(frame_or_clip, (list, tuple)) else [frame_or_clip]
+        if not frames:
+            return self._heuristic_fallback(np.zeros((1, 1, 3), np.uint8), prompt)
+
+        from services.ollama_verifier import get_ollama_verifier
+        ollama = get_ollama_verifier()
+        o_res = ollama.verify(frames, context_type=context_type)
+        if o_res.get("success"):
+            return {"prompt": prompt, **o_res}
+
+        key_frame = frames[len(frames) // 2]
+
         # Build the full prompt: use the template if available, otherwise
         # wrap the user's custom prompt
         template = self.AUDIT_PROMPTS.get(context_type)
@@ -495,11 +520,11 @@ class EvidenceAuditor:
                 '"description": "your analysis"}'
             )
 
-        result = self._kimi.infer(frame_or_clip, full_prompt)
+        result = self._kimi.infer(key_frame, full_prompt)
 
         if result.get("error"):
             # Kimi-VL unavailable or failed — automatically fall back to X-CLIP
-            return self._xclip_fallback(frame_or_clip, prompt, context_type)
+            return self._xclip_fallback(key_frame, prompt, context_type)
 
         is_threat = result.get("confirmed", False)
 
@@ -517,8 +542,12 @@ class EvidenceAuditor:
         """Automatic fallback to X-CLIP zero-shot visual-textual similarity when Kimi-VL is unavailable."""
         try:
             xclip = XCLIPProvider()
+            xclip._load_model()
+            if xclip.model is None:
+                return self._heuristic_fallback(frame, prompt)
+            scene = self.XCLIP_SCENES.get(context_type, prompt)
             prompts = [
-                f"a security surveillance photo showing {prompt}",
+                f"a security surveillance photo showing {scene}",
                 "a security surveillance photo of completely normal peaceful routine activity"
             ]
             probs = xclip.analyze([frame], prompts)
@@ -535,7 +564,9 @@ class EvidenceAuditor:
                 f"Status: {status}. Visual alignment indicates normal baseline activity."
             )
             return {
-                "success": True,
+                # X-CLIP on a single frame is too weak to overrule the detectors,
+                # so it can confirm a threat but only abstains otherwise.
+                "success": is_threat,
                 "prompt": prompt,
                 "reasoning": reasoning,
                 "verified_threat": is_threat,
@@ -721,15 +752,18 @@ class EvidenceAuditor:
         fires_c = threat_summary.get("fires_count", 0)
         animal_assaults_c = threat_summary.get("animal_assaults_count", 0)
         animals_c = threat_summary.get("animals_count", 0)
+        # Say "confirmed" only if a vision model really confirmed it.
+        how = ("detected and confirmed by the AI vision check" if threat_summary.get("vlm_verified")
+               else "detected by the camera detectors (not yet confirmed by the AI vision check; please review the footage)")
 
         if animal_assaults_c > 0 or final == "ANIMAL_ASSAULT":
-            return f"Surveillance initially recorded routine activity in the area. An active animal assault (dog attack) was identified and confirmed by vision models. {rec}"
+            return f"Surveillance initially recorded routine activity in the area. A possible animal attack (dog attack) was {how}. {rec}"
         elif fires_c > 0 or final == "FIRE_SMOKE":
-            return f"Surveillance footage initially captured normal conditions in the monitored area. An active fire and smoke hazard was identified and verified by vision models. {rec}"
+            return f"Surveillance footage initially captured normal conditions in the monitored area. Possible fire or smoke was {how}. {rec}"
         elif weapons_c > 0 or final == "WEAPON":
-            return f"Surveillance recording initially shows routine baseline activity. A visible weapon (firearm/knife) was detected and confirmed by security vision models. {rec}"
+            return f"Surveillance recording initially shows routine baseline activity. A possible weapon (firearm/knife) was {how}. {rec}"
         elif fights_c > 0 or final == "FIGHT_ASSAULT":
-            return f"Surveillance initially recorded normal interactions in the area. A physical altercation between individuals was identified by security vision models. {rec}"
+            return f"Surveillance initially recorded normal interactions in the area. A possible physical altercation was {how}. {rec}"
         elif animals_c > 0 or final == "ROUTINE_ANIMAL":
             return "Surveillance footage shows peaceful routine activity. A non-aggressive animal was observed passing through the monitored zone with no safety risk."
         else:
@@ -751,12 +785,15 @@ class EvidenceAuditor:
         )
 
         return {
-            "success": True,
             "prompt": prompt,
             "reasoning": reasoning,
             "verified_threat": False,
-            "confidence": 0.80,
-            "model_used": "local-evidence-auditor"
+            "confidence": 0.0,
+            "model_used": "local-evidence-auditor",
+            # No real model ran, so this is an abstention. success=False makes the
+            # caller keep the detector's result instead of suppressing it.
+            "success": False,
+            "unavailable": True
         }
 
 

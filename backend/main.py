@@ -336,6 +336,28 @@ def _load_persisted_watch_dir() -> Optional[str]:
         logger.error("Error loading persisted watch_dir: %s", e)
         return None
 
+# ---- Live cameras via Frigate (optional; see deploy/frigate/README.md) ----
+frigate_bridge = None
+
+
+def _start_frigate_bridge():
+    """Start listening to Frigate if FRIGATE_BRIDGE_ENABLED=true."""
+    global frigate_bridge
+    if os.getenv("FRIGATE_BRIDGE_ENABLED", "false").strip().lower() not in ("1", "true", "yes", "on"):
+        return
+    try:
+        from services.frigate_bridge import FrigateBridge, BridgeConfig
+        frigate_bridge = FrigateBridge(
+            BridgeConfig.from_env(output_dir=settings["output_dir"]),
+            alert_service=alert_service,
+            db_path=DB_PATH,
+        )
+        frigate_bridge.start()
+    except Exception as e:
+        frigate_bridge = None
+        logger.error("Frigate bridge failed to start: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db_init = DatabaseInitializer(DB_PATH)
@@ -356,8 +378,11 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=_scan_existing_videos, daemon=True).start()
     alert_task = asyncio.create_task(alert_service.run_inactivity_check(settings["alert_threshold_minutes"]))
     cctv_monitoring_task = asyncio.create_task(cctv_service.run_monitoring_task())
+    _start_frigate_bridge()
     yield
     # Stop systems
+    if frigate_bridge is not None:
+        frigate_bridge.stop()
     watchdog_service.stop()
     alert_service.stop()
     cctv_service.stop_monitoring()
@@ -952,6 +977,19 @@ async def audit_evidence_incident(
     except Exception as e:
         logger.error(f"Error in on-demand VLM audit: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/frigate/status")
+async def frigate_status():
+    """Is the live-camera bridge running, and what has it seen?"""
+    if frigate_bridge is None:
+        return {"enabled": False,
+                "hint": "Set FRIGATE_BRIDGE_ENABLED=true and restart to use live cameras via Frigate."}
+    from services.ollama_verifier import get_ollama_verifier
+    v = get_ollama_verifier()
+    return {"enabled": True, **frigate_bridge.stats,
+            "verifier": {"model": v.model, "url": v.base_url, "available": v.is_available()},
+            "telegram_enabled": frigate_bridge.notifier.enabled}
 
 
 @app.post("/api/coffmap/space-analytics")

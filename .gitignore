@@ -47,3 +47,6 @@ temp/
 scratch/
 alerts/alert_*.jpg
 backend/alerts/alert_*.jpg
+
+# Runtime data (database, uploaded videos, saved incident clips)
+backend/data/

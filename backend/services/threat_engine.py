@@ -76,6 +76,7 @@ class CameraAlertProfile:
     fight_conf_threshold: float = 0.30
     save_alert_snapshots: bool = True
     alert_cooldown_seconds: float = 5.0
+    enable_coffmap: bool = False  # read/written by main.py's camera-profile endpoints
 
 
 class ThreatEngine:
@@ -99,8 +100,16 @@ class ThreatEngine:
         "FIGHT_ASSAULT": "fight_verify",
     }
 
-    def __init__(self, device: str = "cpu", enable_vlm: bool = True):
+    def __init__(self, device: Optional[str] = None, enable_vlm: bool = True):
+        if device is None:
+            # Use the NVIDIA GPU when there is one; this used to be hard-coded to CPU.
+            try:
+                import torch
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+            except Exception:
+                device = "cpu"
         self.device = device
+        logger.info(f"ThreatEngine running detectors on: {self.device}")
         self.models_dir = _resolve_models_dir()
         logger.info(f"ThreatEngine using models directory: {self.models_dir}")
 

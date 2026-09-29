@@ -549,7 +549,7 @@ const Analytics = ({ setCurrentView }) => {
     clear_videos: 0,
     threat_rate_pct: 0,
     avg_occupancy: 0,
-    vlm_accuracy_index: 92.4,
+    vlm_accuracy_index: null,
   });
   const [trends, setTrends] = useState([]);
   const [breakdown, setBreakdown] = useState({
@@ -723,8 +723,8 @@ const Analytics = ({ setCurrentView }) => {
           accent={ACCENTS.purple}
         />
         <StatCard
-          label="VLM Forensic Index"
-          value={loading ? '...' : `${kpis.vlm_accuracy_index}%`}
+          label="AI Accuracy"
+          value={loading ? '...' : (kpis.vlm_accuracy_index == null ? 'Not measured' : `${kpis.vlm_accuracy_index}%`)}
           icon={Sparkles}
           accent={ACCENTS.violet}
           className="col-span-2 lg:col-span-1"
@@ -951,7 +951,7 @@ const Analytics = ({ setCurrentView }) => {
               VLM Narrative Summaries & AI Audits
             </h3>
             <p className="text-xs text-gray-400 mt-0.5">
-              Kimi-VL forensic narratives explaining sequences of events across surveillance recordings
+              AI narratives explaining sequences of events across surveillance recordings
             </p>
           </div>
           <button
@@ -1562,7 +1562,7 @@ const VideoAnalysis = () => {
                 <div className="p-4 bg-gradient-to-r from-violet-50/80 via-purple-50/50 to-indigo-50/60 border border-violet-200/80 rounded-xl">
                   <div className="flex items-center gap-2 mb-2">
                     <Sparkles size={14} className="text-violet-600" />
-                    <span className="text-xs font-bold text-violet-800 uppercase tracking-wide">Kimi-VL Forensic Intelligence Summary</span>
+                    <span className="text-xs font-bold text-violet-800 uppercase tracking-wide">AI Summary</span>
                     <span className="ml-auto px-2 py-0.5 bg-violet-100 text-violet-700 rounded-full text-xs font-semibold">AI Native</span>
                   </div>
                   <p className="text-sm text-gray-800 leading-relaxed">
@@ -1940,7 +1940,7 @@ const DetectionLogs = () => {
     lines.push('================');
     lines.push(`Total videos analyzed: ${summary.totalVideos}`);
     lines.push(`Incidents detected: ${summary.incidentsCount}`);
-    lines.push(`Verified by Kimi-VL: ${summary.vlmVerifiedCount}`);
+    lines.push(`Verified by AI: ${summary.vlmVerifiedCount}`);
     lines.push(`All clear: ${summary.allClearCount}`);
     lines.push('');
     lines.push('RECORDED INCIDENTS');
@@ -2004,7 +2004,7 @@ const DetectionLogs = () => {
         <div className="rounded-xl border border-violet-200 bg-violet-50/70 p-4 shadow-sm hover:shadow-md transition-shadow">
           <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide flex items-center gap-1.5">
             <span>VLM Verified</span>
-            <span className="text-[10px] bg-violet-200 text-violet-800 px-1.5 py-0.2 rounded font-bold">Kimi-VL</span>
+            <span className="text-[10px] bg-violet-200 text-violet-800 px-1.5 py-0.2 rounded font-bold">AI</span>
           </p>
           <p className="text-3xl font-bold text-violet-900 mt-1">{summary.vlmVerifiedCount}</p>
         </div>
@@ -2061,7 +2061,7 @@ const DetectionLogs = () => {
                         {inc.verified ? (
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
                             <CheckCircle2 size={13} className="text-emerald-600" />
-                            Verified by Kimi-VL {inc.confidence ? `· ${inc.confidence}%` : ''}
+                            Verified by AI {inc.confidence ? `· ${inc.confidence}%` : ''}
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
@@ -2137,7 +2137,7 @@ const DetectionLogs = () => {
                             className="px-3.5 py-1.5 text-xs font-semibold text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-200 rounded-lg shadow-2xs flex items-center gap-2 transition-all disabled:opacity-50"
                           >
                             <Sparkles size={14} className={summarizingId === v.verdict.id ? 'animate-spin text-violet-600' : 'text-violet-600'} />
-                            {summarizingId === v.verdict.id ? 'Running Forensic Audit...' : 'Re-verify with Kimi-VL'}
+                            {summarizingId === v.verdict.id ? 'Running Forensic Audit...' : 'Re-verify with AI'}
                           </button>
                         </div>
                       )}
@@ -2548,7 +2548,7 @@ const Verdicts = () => {
                 <div className="bg-violet-50/60 p-2 rounded-lg border border-violet-100">
                   <p className="text-xs text-violet-700 font-semibold">AI Confidence</p>
                   <p className="text-xl font-bold text-violet-700">
-                    {verdict.vlm_confidence ? `${Math.round(verdict.vlm_confidence > 1 ? verdict.vlm_confidence : verdict.vlm_confidence * 100)}%` : (verdict.suspicious_frames > 0 ? '85%' : 'N/A')}
+                    {verdict.vlm_verified && verdict.vlm_confidence ? `${Math.round(verdict.vlm_confidence > 1 ? verdict.vlm_confidence : verdict.vlm_confidence * 100)}%` : 'Not checked'}
                   </p>
                 </div>
               </div>
@@ -2566,7 +2566,7 @@ const Verdicts = () => {
                     <div className="flex items-center justify-between mb-1.5">
                       <div className="flex items-center gap-2 text-xs font-bold text-violet-800 uppercase tracking-wide">
                         <Sparkles size={14} className="text-violet-600" />
-                        <span>Kimi-VL AI Forensic Intelligence Summary</span>
+                        <span>AI Summary</span>
                       </div>
                       <span className="px-2 py-0.5 bg-violet-100 text-violet-700 rounded-full text-xs font-semibold">AI Native (Offline)</span>
                     </div>
@@ -2581,7 +2581,7 @@ const Verdicts = () => {
                       className="px-3 py-1.5 text-xs font-semibold text-violet-700 bg-white hover:bg-violet-50 border border-violet-200 rounded-lg shadow-sm flex items-center gap-1.5 transition-all disabled:opacity-50"
                     >
                       <Sparkles size={13} className={summarizingId === verdict.id ? 'animate-spin text-violet-600' : 'text-violet-600'} />
-                      {summarizingId === verdict.id ? 'Analyzing with Kimi-VL...' : 'Generate Kimi-VL Summary'}
+                      {summarizingId === verdict.id ? 'Analyzing with AI...' : 'Generate AI Summary'}
                     </button>
                   </div>
                 );
@@ -3514,7 +3514,10 @@ export default function App() {
   return (
     <AuthContext.Provider value={{ token, user, logout: handleLogout }}>
       <div className="flex flex-col h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-blue-50/60">
-        {subscription && <TrialBanner daysRemaining={subscription.days_remaining} />}
+        {/* days_remaining is -1 on paid/unlimited plans: no banner then */}
+        {subscription && subscription.plan !== 'paid' && subscription.days_remaining >= 0 && (
+          <TrialBanner daysRemaining={subscription.days_remaining} />
+        )}
         <div className="flex flex-1 min-h-0">
           <Sidebar
             currentView={currentView}

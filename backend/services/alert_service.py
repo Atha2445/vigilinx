@@ -171,6 +171,37 @@ class AlertService:
             logging.error("Unexpected error sending detection email: %s", e)
             return False
 
+    def send_incident_alert(self, subject: str, body: str, snapshot_jpeg: Optional[bytes] = None) -> bool:
+        """Email a live-camera incident (from the Frigate bridge) with its snapshot attached."""
+        config_error = self._validate_email_config()
+        if config_error:
+            logging.warning("Incident email skipped: %s", config_error)
+            return False
+        recipients = self._get_recipients()
+        if not recipients:
+            logging.warning("Incident email skipped: no recipients configured")
+            return False
+        try:
+            from email.mime.image import MIMEImage
+            msg = MIMEMultipart()
+            msg['From'] = self.email_config['sender_email']
+            msg['To'] = ", ".join(recipients)
+            msg['Subject'] = subject
+            msg.attach(MIMEText(body, 'plain'))
+            if snapshot_jpeg:
+                img = MIMEImage(snapshot_jpeg, _subtype="jpeg")
+                img.add_header('Content-Disposition', 'attachment', filename='incident.jpg')
+                msg.attach(img)
+            with smtplib.SMTP(self.email_config['smtp_server'], self.email_config['smtp_port']) as server:
+                server.starttls()
+                server.login(self.email_config['sender_email'], self.email_config['sender_password'])
+                server.send_message(msg)
+            logging.info("Incident email sent to %d recipients", len(recipients))
+            return True
+        except Exception as e:
+            logging.error("Error sending incident email: %s", e)
+            return False
+
     def stop(self):
         self.is_running = False
 

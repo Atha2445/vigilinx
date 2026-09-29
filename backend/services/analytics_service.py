@@ -45,7 +45,7 @@ class AnalyticsService:
                 "avg_occupancy": 0,
                 "total_cameras": 0,
                 "active_cameras": 0,
-                "vlm_accuracy_index": 92.4,
+                "vlm_accuracy_index": None,  # not measured (was a hard-coded 92.4)
             }
 
         try:
@@ -83,14 +83,14 @@ class AnalyticsService:
                 "avg_occupancy": avg_occ,
                 "total_cameras": total_cams,
                 "active_cameras": active_cams,
-                "vlm_accuracy_index": 92.4,
+                "vlm_accuracy_index": None,  # not measured (was a hard-coded 92.4)
             }
         except Exception as e:
             logger.error(f"Error computing KPIs: {e}")
             return {
                 "total_videos": 0, "threat_incidents": 0, "clear_videos": 0,
                 "threat_rate_pct": 0.0, "avg_occupancy": 0, "total_cameras": 0,
-                "active_cameras": 0, "vlm_accuracy_index": 92.4
+                "active_cameras": 0, "vlm_accuracy_index": None  # not measured (was a hard-coded 92.4)
             }
         finally:
             conn.close()
@@ -144,12 +144,13 @@ class AnalyticsService:
                 act = (r["detected_action"] or "").upper()
                 if "WEAPON" in act or "GUN" in act or "KNIFE" in act:
                     counts["weapons"] += 1
+                # Before the fight check: "ANIMAL_ASSAULT" also contains "ASSAULT".
+                elif "DOG" in act or "ANIMAL" in act:
+                    counts["animals"] += 1
                 elif "FIGHT" in act or "ASSAULT" in act or "STANCE" in act:
                     counts["fights"] += 1
                 elif "FIRE" in act or "SMOKE" in act:
                     counts["fire_smoke"] += 1
-                elif "DOG" in act or "ANIMAL" in act:
-                    counts["animals"] += 1
 
             v_row = conn.execute("SELECT COUNT(*) as clr FROM video_verdicts WHERE needs_attention = 0").fetchone()
             counts["clear"] = v_row["clr"] if v_row else 0
