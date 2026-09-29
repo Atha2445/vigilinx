@@ -752,15 +752,18 @@ class EvidenceAuditor:
         fires_c = threat_summary.get("fires_count", 0)
         animal_assaults_c = threat_summary.get("animal_assaults_count", 0)
         animals_c = threat_summary.get("animals_count", 0)
+        # Say "confirmed" only if a vision model really confirmed it.
+        how = ("detected and confirmed by the AI vision check" if threat_summary.get("vlm_verified")
+               else "detected by the camera detectors (not yet confirmed by the AI vision check; please review the footage)")
 
         if animal_assaults_c > 0 or final == "ANIMAL_ASSAULT":
-            return f"Surveillance initially recorded routine activity in the area. An active animal assault (dog attack) was identified and confirmed by vision models. {rec}"
+            return f"Surveillance initially recorded routine activity in the area. A possible animal attack (dog attack) was {how}. {rec}"
         elif fires_c > 0 or final == "FIRE_SMOKE":
-            return f"Surveillance footage initially captured normal conditions in the monitored area. An active fire and smoke hazard was identified and verified by vision models. {rec}"
+            return f"Surveillance footage initially captured normal conditions in the monitored area. Possible fire or smoke was {how}. {rec}"
         elif weapons_c > 0 or final == "WEAPON":
-            return f"Surveillance recording initially shows routine baseline activity. A visible weapon (firearm/knife) was detected and confirmed by security vision models. {rec}"
+            return f"Surveillance recording initially shows routine baseline activity. A possible weapon (firearm/knife) was {how}. {rec}"
         elif fights_c > 0 or final == "FIGHT_ASSAULT":
-            return f"Surveillance initially recorded normal interactions in the area. A physical altercation between individuals was identified by security vision models. {rec}"
+            return f"Surveillance initially recorded normal interactions in the area. A possible physical altercation was {how}. {rec}"
         elif animals_c > 0 or final == "ROUTINE_ANIMAL":
             return "Surveillance footage shows peaceful routine activity. A non-aggressive animal was observed passing through the monitored zone with no safety risk."
         else:

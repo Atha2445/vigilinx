@@ -309,9 +309,43 @@ class VideoService:
             logger.error(f"Compression failed: {e}")
             return False
 
-    def prepare_video_for_analysis(self, input_path: str, output_path: str,
+    def prepare_video_for_analysis(self, input_path: str, output_path: Optional[str] = None,
                                    max_height: int = 720, crf: int = 28, preset: str = "fast",
-                                   max_duration_sec: Optional[int] = 300) -> bool:
+                                   max_duration_sec: Optional[int] = 300,
+                                   analyze_full: Optional[bool] = None):
+        """Shrink/trim a video before analysis.
+
+        Two call styles:
+          - prepare_video_for_analysis(src, dst, ...) -> bool   (legacy)
+          - prepare_video_for_analysis(src, max_duration_sec=..., analyze_full=...)
+                -> (path_to_analyze, info)                       (used by main.py)
+            analyze_full=True keeps the whole video. If ffmpeg is missing or fails,
+            the original file is returned so the upload still gets analysed.
+        """
+        if output_path is not None:
+            return self._ffmpeg_prepare(input_path, output_path, max_height, crf, preset, max_duration_sec)
+
+        duration = None if analyze_full else max_duration_sec
+        info = {"prep_applied": False, "max_duration_sec": duration}
+        # Same file name as the input (in its own folder), because the verdict
+        # is recorded under the name of the file that gets analysed.
+        prep_dir = os.path.join(tempfile.gettempdir(), "vigilinx_prep")
+        os.makedirs(prep_dir, exist_ok=True)
+        tmp_out = os.path.join(prep_dir, os.path.splitext(os.path.basename(input_path))[0] + ".mp4")
+        if os.path.abspath(tmp_out) == os.path.abspath(input_path):
+            return input_path, info
+        if self._ffmpeg_prepare(input_path, tmp_out, max_height, crf, preset, duration):
+            info["prep_applied"] = True
+            return tmp_out, info
+        try:
+            os.remove(tmp_out)
+        except OSError:
+            pass
+        info["reason"] = "ffmpeg unavailable or failed; analysing original file"
+        return input_path, info
+
+    def _ffmpeg_prepare(self, input_path: str, output_path: str, max_height: int, crf: int,
+                        preset: str, max_duration_sec: Optional[int]) -> bool:
         if not self.check_ffmpeg_available():
             return False
         input_path_ = os.path.abspath(input_path)
@@ -800,10 +834,9 @@ class VideoService:
 
         verdict = self.calculate_verdict(detections, duration, total_frames, vlm_audit_records=vlm_audit_records)
         final_inc = verdict.get("final_incident", "CLEAR")
-        if enable_vlm and final_inc not in ("CLEAR", "ROUTINE_ANIMAL"):
-            vlm_overall_verified = True
-            if vlm_overall_conf <= 0.0:
-                vlm_overall_conf = 0.85
+        # Only report "AI verified" when a vision model actually confirmed a
+        # threat above (vlm_overall_verified/conf are set there). This used to
+        # mark every flagged video as verified at 85% even when no model ran.
 
         verdict["vlm_verified"] = vlm_overall_verified
         verdict["vlm_confidence"] = round(vlm_overall_conf, 2)
