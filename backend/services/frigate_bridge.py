@@ -3,19 +3,21 @@ services/frigate_bridge.py — Turns Frigate camera events into verified Vigilin
 
 How it works
 ------------
-1. Frigate watches every camera and publishes each tracked object (person, dog,
-   knife) on MQTT topic ``frigate/events``.
+1. Frigate watches every camera and publishes each tracked object (person,
+   animals, knife) on MQTT topic ``frigate/events``.
 2. The bridge keeps a live list of objects per camera and starts a check when
-   the scene could be dangerous:
-     - WEAPON: Frigate sees a knife
-     - ANIMAL: a dog and a person are on camera together
-     - FIGHT:  two or more people are moving on camera
+   one of these is on camera:
+     - PERSON: any person
+     - ANIMAL: any animal (dog, cat, cow, horse, sheep, ...)
+     - WEAPON: a knife
    Checks are rate limited per camera, so a busy lobby doesn't flood the GPU.
 3. For each check it downloads the recording of that moment from Frigate
-   (a few seconds before and after), runs Vigilinx's own detectors on it
-   (pose-based fight detector, weapon model, dog-contact logic), and only if
-   those find something asks Ollama to look at a short frame sequence and
-   answer yes or no.
+   (a few seconds before and after) and runs Vigilinx's own detectors on it
+   (pose-based fight detector, weapon model, dog-contact logic). Ollama then
+   looks at a short frame sequence and answers yes or no: about what the
+   detectors found, or, if they found nothing, whether anything dangerous is
+   happening at all (BRIDGE_VERIFY_ALL=true, the default), so an incident the
+   detectors miss is still caught.
 4. Confirmed incidents are saved (clip + snapshot + DB row) and sent to
    Telegram and email.
 
@@ -48,7 +50,15 @@ logger = logging.getLogger("vids.frigate_bridge")
 KIND_TO_THREATS = {
     "WEAPON": ["WEAPON"],
     "ANIMAL": ["ANIMAL_ASSAULT", "DOG_ATTACK"],
-    "FIGHT": ["FIGHT_ASSAULT"],
+    "PERSON": ["FIGHT_ASSAULT", "WEAPON"],
+}
+# Frigate (COCO) labels that start an ANIMAL check
+ANIMAL_LABELS = {"dog", "cat", "cow", "horse", "sheep", "bird", "bear", "elephant", "zebra", "giraffe"}
+# What Ollama is asked, and what a "yes" is reported as, when the detectors found nothing
+AI_ONLY_CHECK = {
+    "PERSON": ("security_audit", "SECURITY_INCIDENT"),
+    "ANIMAL": ("animal_assault_verify", "ANIMAL_ASSAULT"),
+    "WEAPON": ("weapon_verify", "WEAPON"),
 }
 THREAT_PRIORITY = ["WEAPON", "ANIMAL_ASSAULT", "DOG_ATTACK", "FIGHT_ASSAULT", "FIRE_SMOKE"]
 THREAT_CONTEXT = {
@@ -64,6 +74,7 @@ THREAT_TITLE = {
     "DOG_ATTACK": "Aggressive dog near a person",
     "FIGHT_ASSAULT": "Fight in progress",
     "FIRE_SMOKE": "Fire or smoke",
+    "SECURITY_INCIDENT": "Possible incident spotted by AI",
 }
 # (final_incident, title, icon) as the dashboard's incident cards expect them
 DASHBOARD_INCIDENT = {
@@ -72,6 +83,7 @@ DASHBOARD_INCIDENT = {
     "DOG_ATTACK": ("ANIMAL_ASSAULT", "Animal Assault (Dog Attack)", "🐕"),
     "FIGHT_ASSAULT": ("FIGHT_ASSAULT", "Physical Altercation / Fight", "🥊"),
     "FIRE_SMOKE": ("FIRE_SMOKE", "Fire & Smoke Hazard", "🔥"),
+    "SECURITY_INCIDENT": ("SECURITY_INCIDENT", "Security Incident (spotted by AI)", "🚨"),
 }
 
 
@@ -93,7 +105,8 @@ class BridgeConfig:
     alert_cooldown: float = 120.0     # min seconds between alerts of one kind per camera
     min_confidence: float = 0.5       # Ollama confidence needed to confirm
     alert_when_unverified: bool = True
-    min_moving_people_for_fight: int = 2
+    min_people: int = 1               # people on camera needed to start a PERSON check
+    verify_all: bool = True           # ask Ollama even when the detectors found nothing
     verify_frames: int = 6            # frames sent to Ollama per check (fewer = faster on CPU)
     output_dir: str = field(default_factory=lambda: tempfile.gettempdir())
 
@@ -109,6 +122,8 @@ class BridgeConfig:
         c.min_confidence = float(os.getenv("BRIDGE_MIN_CONFIDENCE", c.min_confidence))
         c.alert_when_unverified = _env_bool("BRIDGE_ALERT_WHEN_UNVERIFIED", c.alert_when_unverified)
         c.verify_frames = max(1, int(os.getenv("BRIDGE_VERIFY_FRAMES", c.verify_frames)))
+        c.min_people = max(1, int(os.getenv("BRIDGE_MIN_PEOPLE", c.min_people)))
+        c.verify_all = _env_bool("BRIDGE_VERIFY_ALL", c.verify_all)
         if output_dir:
             c.output_dir = output_dir
         return c
@@ -155,17 +170,16 @@ class ActiveObjects:
             return list(self._by_camera.get(camera, {}).values())
 
 
-def triggers_for(objects: List[Dict[str, Any]], min_people: int = 2) -> Set[str]:
+def triggers_for(objects: List[Dict[str, Any]], min_people: int = 1) -> Set[str]:
     """Which checks the current scene calls for."""
     labels = [o["label"] for o in objects]
     kinds: Set[str] = set()
     if "knife" in labels:
         kinds.add("WEAPON")
-    if "dog" in labels and "person" in labels:
+    if any(label in ANIMAL_LABELS for label in labels):
         kinds.add("ANIMAL")
-    moving_people = sum(1 for o in objects if o["label"] == "person" and not o["stationary"])
-    if moving_people >= min_people:
-        kinds.add("FIGHT")
+    if labels.count("person") >= min_people:
+        kinds.add("PERSON")
     return kinds
 
 
@@ -215,6 +229,7 @@ class FrigateBridge:
         self.stats = {"events": 0, "checks_queued": 0, "checks_run": 0,
                       "detector_hits": 0, "confirmed": 0, "rejected": 0,
                       "unverified_alerts": 0, "clip_failures": 0,
+                      "ai_only_checks": 0, "ai_only_confirmed": 0,
                       "mqtt_connected": False, "last_incident": None}
 
     # ---- lazily created heavy parts --------------------------------------
@@ -299,7 +314,7 @@ class FrigateBridge:
         objs = self.objects.on_camera(camera)
         queued = []
         now = self._clock()
-        for kind in triggers_for(objs, self.cfg.min_moving_people_for_fight):
+        for kind in triggers_for(objs, self.cfg.min_people):
             key = (camera, kind)
             with self._lock:
                 if key in self._pending:
@@ -312,7 +327,7 @@ class FrigateBridge:
                 self._pending.add(key)
             knife = max((o["score"] for o in objs if o["label"] == "knife"), default=0.0)
             job = Job(camera, kind, now, [o["id"] for o in objs], knife_score=knife,
-                      dog_seen=any(o["label"] == "dog" for o in objs))
+                      dog_seen=any(o["label"] in ANIMAL_LABELS for o in objs))
             try:
                 self._jobs.put_nowait(job)
                 self.stats["checks_queued"] += 1
@@ -388,6 +403,8 @@ class FrigateBridge:
             hits = self._detect(frames, job)
             threat = self._pick_threat(hits, job)
             if threat is None:
+                if self.cfg.verify_all and job.kind in AI_ONLY_CHECK:
+                    return self._ai_only_check(job, frames, clip)
                 logger.info("[%s] %s check: detectors found nothing", job.camera, job.kind)
                 return {"status": "clear"}
 
@@ -402,6 +419,26 @@ class FrigateBridge:
                 os.remove(clip)
             except OSError:
                 pass
+
+    def _ai_only_check(self, job: Job, frames: List[np.ndarray], clip: str) -> Dict[str, Any]:
+        """Detectors found nothing: let Ollama look at frames spread over the whole clip."""
+        context, threat = AI_ONLY_CHECK[job.kind]
+        n = min(self.cfg.verify_frames, len(frames))
+        idxs = sorted({int((k + 0.5) * len(frames) / n) for k in range(n)})
+        verdict = self.verifier.verify([frames[i] for i in idxs], context,
+                                       clip_seconds=len(frames) / self.cfg.analysis_fps)
+        self.stats["ai_only_checks"] += 1
+        if not verdict.get("success"):
+            logger.info("[%s] %s check: detectors found nothing; verifier unavailable", job.camera, job.kind)
+            return {"status": "clear", "verdict": verdict}
+        if not (verdict.get("verified_threat") and verdict.get("confidence", 0) >= self.cfg.min_confidence):
+            logger.info("[%s] %s check: detectors and %s found nothing: %s", job.camera, job.kind,
+                        verdict.get("model_used"), verdict.get("reasoning", "")[:160])
+            return {"status": "clear", "verdict": verdict}
+        self.stats["confirmed"] += 1
+        self.stats["ai_only_confirmed"] += 1
+        self._alert(job, threat, "confirmed", verdict, frames[idxs[len(idxs) // 2]], clip)
+        return {"status": "confirmed", "threat": threat, "verdict": verdict}
 
     def _decide(self, job: Job, threat: str, verdict: Dict[str, Any], best_frame, clip: str) -> Dict[str, Any]:
         if verdict.get("success"):
@@ -487,10 +524,11 @@ class FrigateBridge:
         # The engine turns any low-confidence "animal" touching a person into an
         # animal assault and then drops its fight hits; in a scuffle, tangled
         # bodies are often mistaken for a dog. Frigate's own dog tracking decides
-        # whether there is a dog: if it saw none, those hits are the fight.
-        if job.kind == "FIGHT" and not job.dog_seen and "FIGHT_ASSAULT" not in hits:
+        # whether there is an animal: if it saw none, those hits are the fight.
+        # When Frigate did see an animal, its own ANIMAL check handles those hits.
+        if job.kind == "PERSON":
             animal = hits.pop("ANIMAL_ASSAULT", []) + hits.pop("DOG_ATTACK", [])
-            if animal:
+            if animal and not job.dog_seen and "FIGHT_ASSAULT" not in hits:
                 hits["FIGHT_ASSAULT"] = sorted(animal, key=lambda h: h[0])
         present = [t for t in THREAT_PRIORITY if t in hits]
         if not present:
@@ -519,6 +557,13 @@ class FrigateBridge:
         now = self._clock()
         with self._lock:
             self._last_alert[(job.camera, job.kind)] = now
+            # A person, an animal and a knife in one scene start separate checks
+            # that can find the same incident: alert it once.
+            if now - self._last_alert.get((job.camera, "threat:" + threat), -1e18) < self.cfg.alert_cooldown:
+                logger.info("[%s] %s already alerted in the last %.0fs; not repeating",
+                            job.camera, threat, self.cfg.alert_cooldown)
+                return
+            self._last_alert[(job.camera, "threat:" + threat)] = now
         ts = datetime.fromtimestamp(job.trigger_time).strftime("%d %b %Y, %I:%M:%S %p")
         title = THREAT_TITLE.get(threat, threat)
         conf = verdict.get("confidence", 0.0)

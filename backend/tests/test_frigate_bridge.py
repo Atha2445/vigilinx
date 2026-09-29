@@ -85,11 +85,15 @@ def bridge(engine, verifier, tmp_path, **cfg):
 
 def test_triggers():
     p = {"label": "person", "stationary": False}
-    assert triggers_for([p]) == set()
-    assert triggers_for([p, dict(p)]) == {"FIGHT"}
-    assert triggers_for([p, {"label": "person", "stationary": True}]) == set()  # someone sitting
-    assert triggers_for([p, {"label": "dog", "stationary": False}]) == {"ANIMAL"}
+    assert triggers_for([]) == set()
+    assert triggers_for([p]) == {"PERSON"}
+    assert triggers_for([{"label": "person", "stationary": True}]) == {"PERSON"}  # someone standing still
+    assert triggers_for([p], min_people=2) == set()
+    assert triggers_for([{"label": "dog", "stationary": False}]) == {"ANIMAL"}  # animal on its own
+    assert triggers_for([{"label": "cow", "stationary": True}]) == {"ANIMAL"}
+    assert triggers_for([p, {"label": "dog", "stationary": False}]) == {"PERSON", "ANIMAL"}
     assert triggers_for([{"label": "knife", "stationary": True}]) == {"WEAPON"}
+    assert triggers_for([{"label": "car", "stationary": False}]) == set()
 
 
 def test_active_objects_add_and_end():
@@ -103,7 +107,7 @@ def test_active_objects_add_and_end():
 
 def test_event_queues_once_then_cools_down(tmp_path):
     b, _ = bridge(FakeEngine(), FakeVerifier({}), tmp_path)
-    b.handle_event(ev("a", "person"))
+    assert [j.kind for j in b.handle_event(ev("a", "person"))] == ["PERSON"]
     jobs = b.handle_event(ev("b", "dog"))
     assert [j.kind for j in jobs] == ["ANIMAL"]
     assert b.handle_event(ev("b", "dog", kind="update")) == []  # already pending
@@ -115,7 +119,8 @@ def test_cameras_are_independent(tmp_path):
     b, _ = bridge(FakeEngine(), FakeVerifier({}), tmp_path)
     b.handle_event(ev("a", "person", camera="gate"))
     b.handle_event(ev("b", "dog", camera="gate"))
-    b.handle_event(ev("c", "person", camera="lobby"))
+    jobs = b.handle_event(ev("c", "person", camera="lobby"))
+    assert [(j.camera, j.kind) for j in jobs] == [("lobby", "PERSON")]
     jobs = b.handle_event(ev("d", "dog", camera="lobby"))
     assert [(j.camera, j.kind) for j in jobs] == [("lobby", "ANIMAL")]
 
@@ -132,7 +137,7 @@ DOWN = {"success": False, "unavailable": True, "verified_threat": False, "confid
 def test_confirmed_fight_alerts_with_photo_and_clip(tmp_path):
     verifier = FakeVerifier(CONFIRM)
     b, notifier = bridge(FakeEngine("FIGHT_ASSAULT"), verifier, tmp_path)
-    out = b.process_job(Job("gate", "FIGHT", 1000.0, ["a", "b"]))
+    out = b.process_job(Job("gate", "PERSON", 1000.0, ["a", "b"]))
     assert out["status"] == "confirmed"
     assert verifier.calls and verifier.calls[0][1] == "fight_verify" and verifier.calls[0][0] > 1
     assert len(notifier.sent) == 1
@@ -144,14 +149,14 @@ def test_confirmed_fight_alerts_with_photo_and_clip(tmp_path):
 
 def test_rejected_by_verifier_does_not_alert(tmp_path):
     b, notifier = bridge(FakeEngine("FIGHT_ASSAULT"), FakeVerifier(REJECT), tmp_path)
-    assert b.process_job(Job("gate", "FIGHT", 1000.0, []))["status"] == "rejected"
+    assert b.process_job(Job("gate", "PERSON", 1000.0, []))["status"] == "rejected"
     assert notifier.sent == []
 
 
 def test_low_confidence_yes_counts_as_no(tmp_path):
     weak = dict(CONFIRM, confidence=0.3)
     b, notifier = bridge(FakeEngine("FIGHT_ASSAULT"), FakeVerifier(weak), tmp_path)
-    assert b.process_job(Job("gate", "FIGHT", 1000.0, []))["status"] == "rejected"
+    assert b.process_job(Job("gate", "PERSON", 1000.0, []))["status"] == "rejected"
     assert notifier.sent == []
 
 
@@ -169,11 +174,36 @@ def test_verifier_down_can_be_set_to_stay_quiet(tmp_path):
     assert notifier.sent == []
 
 
-def test_nothing_found_skips_verifier(tmp_path):
+def test_nothing_found_skips_verifier_when_verify_all_is_off(tmp_path):
     verifier = FakeVerifier(CONFIRM)
-    b, notifier = bridge(FakeEngine(None), verifier, tmp_path)
-    assert b.process_job(Job("gate", "FIGHT", 1000.0, []))["status"] == "clear"
+    b, notifier = bridge(FakeEngine(None), verifier, tmp_path, verify_all=False)
+    assert b.process_job(Job("gate", "PERSON", 1000.0, []))["status"] == "clear"
     assert verifier.calls == [] and notifier.sent == []
+
+
+def test_nothing_found_still_asks_ai_and_alerts_if_it_sees_something(tmp_path):
+    verifier = FakeVerifier(CONFIRM)
+    b, notifier = bridge(FakeEngine(None), verifier, tmp_path, verify_frames=3)
+    out = b.process_job(Job("gate", "PERSON", 1000.0, []))
+    assert out["status"] == "confirmed" and out["threat"] == "SECURITY_INCIDENT"
+    assert verifier.calls == [(3, "security_audit")] and len(notifier.sent) == 1
+    assert b.stats["ai_only_confirmed"] == 1
+
+
+def test_nothing_found_and_ai_says_no_is_quiet(tmp_path):
+    for verdict in (REJECT, DOWN):
+        verifier = FakeVerifier(verdict)
+        b, notifier = bridge(FakeEngine(None), verifier, tmp_path)
+        assert b.process_job(Job("gate", "ANIMAL", 1000.0, []))["status"] == "clear"
+        assert verifier.calls[0][1] == "animal_assault_verify" and notifier.sent == []
+
+
+def test_same_incident_found_by_two_checks_alerts_once(tmp_path):
+    b, notifier = bridge(FakeEngine("WEAPON"), FakeVerifier(CONFIRM), tmp_path)
+    b._clock = lambda: 5000.0
+    assert b.process_job(Job("gate", "WEAPON", 5000.0, []))["status"] == "confirmed"
+    assert b.process_job(Job("gate", "PERSON", 5000.0, []))["status"] == "confirmed"
+    assert len(notifier.sent) == 1
 
 
 def test_frigate_knife_is_checked_even_if_weapon_model_misses(tmp_path):
@@ -186,15 +216,14 @@ def test_frigate_knife_is_checked_even_if_weapon_model_misses(tmp_path):
 def test_missing_recording_reports_no_clip(tmp_path):
     b, notifier = bridge(FakeEngine("FIGHT_ASSAULT"), FakeVerifier(CONFIRM), tmp_path)
     b._fetch_clip = lambda cam, s, e: None
-    assert b.process_job(Job("gate", "FIGHT", 1000.0, []))["status"] == "no_clip"
+    assert b.process_job(Job("gate", "PERSON", 1000.0, []))["status"] == "no_clip"
     assert b.stats["clip_failures"] == 1
 
 
 def test_alert_cooldown_blocks_repeat_checks(tmp_path):
     b, _ = bridge(FakeEngine("FIGHT_ASSAULT"), FakeVerifier(CONFIRM), tmp_path)
     b._clock = lambda: 5000.0
-    b.handle_event(ev("a", "person"))
-    job = b.handle_event(ev("b", "person"))[0]
+    job = b.handle_event(ev("a", "person"))[0]
     b.process_job(job)
     b._pending.clear()
     b._last_check.clear()
@@ -211,7 +240,7 @@ def test_logs_to_detections_table(tmp_path):
     conn.close()
     b, _ = bridge(FakeEngine("FIGHT_ASSAULT"), FakeVerifier(CONFIRM), tmp_path)
     b.db_path = db
-    b.process_job(Job("gate", "FIGHT", 1000.0, []))
+    b.process_job(Job("gate", "PERSON", 1000.0, []))
     rows = sqlite3.connect(db).execute("SELECT detected_action, is_alert FROM detections").fetchall()
     assert rows == [("LIVE FIGHT_ASSAULT [confirmed] on gate", 1)]
 
@@ -228,7 +257,7 @@ def test_alert_adds_dashboard_verdict(tmp_path):
     conn.close()
     b, _ = bridge(FakeEngine("FIGHT_ASSAULT"), FakeVerifier(DOWN), tmp_path)
     b.db_path = db
-    b.process_job(Job("gate", "FIGHT", 1000.0, []))
+    b.process_job(Job("gate", "PERSON", 1000.0, []))
     path, risk, attn, details = sqlite3.connect(db).execute(
         "SELECT video_path, risk_level, needs_attention, details_json FROM video_verdicts").fetchone()
     assert path.startswith("incident_gate_1000_fight_assault") and risk.startswith("[CRITICAL]") and attn == 1
@@ -313,14 +342,14 @@ def test_cpu_settings_from_env(monkeypatch):
 def test_verify_frames_setting_limits_frames_sent(tmp_path):
     verifier = FakeVerifier(CONFIRM)
     b, _ = bridge(FakeEngine("FIGHT_ASSAULT"), verifier, tmp_path, verify_frames=3)
-    b.process_job(Job("gate", "FIGHT", 1000.0, []))
+    b.process_job(Job("gate", "PERSON", 1000.0, []))
     assert verifier.calls[0][0] == 3
 
 
 def test_single_verify_frame_uses_peak(tmp_path):
     verifier = FakeVerifier(CONFIRM)
     b, _ = bridge(FakeEngine("FIGHT_ASSAULT"), verifier, tmp_path, verify_frames=1)
-    b.process_job(Job("gate", "FIGHT", 1000.0, []))
+    b.process_job(Job("gate", "PERSON", 1000.0, []))
     assert verifier.calls[0][0] == 1
 
 
@@ -345,22 +374,23 @@ def test_fight_check_without_dog_verifies_animal_hits_as_fight(tmp_path):
     # saw no dog, the verifier must be asked about a fight, not a dog attack.
     v = FakeVerifier(CONFIRM)
     b, _ = bridge(FakeEngine("ANIMAL_ASSAULT"), v, tmp_path)
-    out = b.process_job(Job("gate", "FIGHT", 1000.0, [], dog_seen=False))
+    out = b.process_job(Job("gate", "PERSON", 1000.0, [], dog_seen=False))
     assert out["threat"] == "FIGHT_ASSAULT" and v.calls[0][1] == "fight_verify"
 
 
-def test_fight_check_with_dog_keeps_animal_assault(tmp_path):
-    v = FakeVerifier(CONFIRM)
+def test_person_check_leaves_animal_hits_to_the_animal_check_when_a_dog_is_seen(tmp_path):
+    v = FakeVerifier(REJECT)
     b, _ = bridge(FakeEngine("ANIMAL_ASSAULT"), v, tmp_path)
-    out = b.process_job(Job("gate", "FIGHT", 1000.0, [], dog_seen=True))
-    assert out["threat"] == "ANIMAL_ASSAULT" and v.calls[0][1] == "animal_assault_verify"
+    b.process_job(Job("gate", "PERSON", 1000.0, [], dog_seen=True))
+    assert v.calls[0][1] == "security_audit"
+    b.process_job(Job("gate", "ANIMAL", 1000.0, [], dog_seen=True))
+    assert v.calls[1][1] == "animal_assault_verify"
 
 
 def test_queued_job_records_whether_frigate_saw_a_dog(tmp_path):
     b, _ = bridge(FakeEngine(), FakeVerifier(CONFIRM), tmp_path)
-    b.handle_event(ev("p1", "person"))
-    jobs = b.handle_event(ev("p2", "person"))
-    assert [j.kind for j in jobs] == ["FIGHT"] and jobs[0].dog_seen is False
+    jobs = b.handle_event(ev("p1", "person"))
+    assert [j.kind for j in jobs] == ["PERSON"] and jobs[0].dog_seen is False
     b2, _ = bridge(FakeEngine(), FakeVerifier(CONFIRM), tmp_path)
     for oid, label in (("p1", "person"), ("p2", "person"), ("d1", "dog")):
         jobs = b2.handle_event(ev(oid, label))

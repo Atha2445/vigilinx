@@ -256,6 +256,9 @@ Also stop Ubuntu from sleeping: *Settings → Power → Automatic Suspend → Of
 - **Alert delay:** each alert waits ~20 seconds for Frigate to save the recording, then the AI check
   runs on the processor, which can take one to a few minutes. If Ollama is too slow or not running,
   Vigilinx still alerts, marked *not double-checked*.
+- **Every person and animal is checked by the AI.** With people in view all day, checks queue up on
+  a processor. If alerts come too late, add `BRIDGE_CHECK_COOLDOWN=120` (or `BRIDGE_MIN_PEOPLE=2` to
+  skip single passers-by) to `backend/.env`.
 
 ## Troubleshooting
 

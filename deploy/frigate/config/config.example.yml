@@ -35,15 +35,32 @@ model:
   labelmap_path: /labelmap/coco-80.txt
 
 objects:
+  # Vigilinx checks every person and animal Frigate reports (and knives).
   track:
     - person
     - dog
+    - cat
+    - cow
+    - horse
+    - sheep
     - knife
   filters:
     person:
       min_score: 0.5
       threshold: 0.7
     dog:
+      min_score: 0.5
+      threshold: 0.65
+    cat:
+      min_score: 0.5
+      threshold: 0.65
+    cow:
+      min_score: 0.5
+      threshold: 0.65
+    horse:
+      min_score: 0.5
+      threshold: 0.65
+    sheep:
       min_score: 0.5
       threshold: 0.65
     knife:
@@ -77,6 +94,10 @@ review:
     labels:
       - person
       - dog
+      - cat
+      - cow
+      - horse
+      - sheep
       - knife
 
 # ---- Optional: Frigate's own AI descriptions (shown in Frigate's Explore view) -

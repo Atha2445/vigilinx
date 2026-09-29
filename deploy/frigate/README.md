@@ -5,26 +5,37 @@ backend keeps running as before and connects to them.
 
 | Service | What it does |
 |---|---|
-| **Frigate** 0.18.0 | Reads every camera over RTSP, records, and tracks people, dogs and knives on the GPU |
+| **Frigate** 0.18.0 | Reads every camera over RTSP, records, and tracks people, animals and knives on the GPU |
 | **Mosquitto** | Carries Frigate's events to Vigilinx |
 | **Ollama** (`qwen3-vl:4b`) | Looks at a few frames of a flagged moment and answers "is this really a fight / weapon / dog attack?" |
 
 ## How an alert happens
 
-1. Frigate sees a risky combination on a camera: a **knife**, a **dog and a person**,
-   or **two or more people moving**.
+1. Frigate sees a **person**, an **animal** (dog, cat, cow, horse, sheep) or a
+   **knife** on a camera.
 2. Vigilinx downloads the ~10 seconds of recording around that moment from Frigate
    and runs its own detectors on it (pose-based fight detector, weapon model,
    dog-contact logic).
-3. Only if those find something, Ollama checks 6 frames and answers yes/no.
-4. **Yes** → Telegram photo + clip, email, and a row in the Vigilinx detections table.
-   **No** → logged as rejected, no alert.
-   **Ollama down** → still alerts, marked *not double-checked*, so the system
-   never goes silent because the verifier broke.
+3. Ollama checks 6 frames and answers yes/no:
+   - if the detectors found something, about that (e.g. "is this really a fight?");
+   - if they found nothing, whether anything dangerous is happening at all
+     (a fight, a weapon, an animal attacking someone), so incidents the
+     detectors miss are still caught. Set `BRIDGE_VERIFY_ALL=false` to skip this.
+4. **Yes** → Telegram photo + clip, email, and an incident on the Vigilinx dashboard.
+   **No** → logged, no alert.
+   **Ollama down** → a detector hit still alerts, marked *not double-checked*, so
+   the system never goes silent because the verifier broke.
 
 Alerts arrive roughly 20–30 seconds after the event, because Frigate has to finish
 writing the recording first. Checks are rate-limited per camera (30 s between
 checks, 2 min between alerts of the same kind); tune in `backend/.env`.
+
+Because every person and animal is now checked by Ollama, a camera with people
+in view runs about one Ollama check every 30 seconds. On a GPU that is easy; on
+a CPU-only PC one check takes 1–3 minutes, so checks queue up (at most one
+waiting per camera and kind). If alerts arrive too late, raise
+`BRIDGE_CHECK_COOLDOWN`, or set `BRIDGE_MIN_PEOPLE=2` so a single passer-by
+isn't checked.
 
 ## Setup
 

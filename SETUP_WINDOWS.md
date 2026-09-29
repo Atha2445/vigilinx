@@ -200,6 +200,9 @@ You want to see `"enabled": true`, `"mqtt_connected": true` and, under `"verifie
 - **Alert delay:** each alert waits ~20 seconds for Frigate to save the recording, then the AI check
   runs on the processor, which can take one to a few minutes. If Ollama is too slow or not running,
   Vigilinx still alerts, marked *not double-checked*.
+- **Every person and animal is checked by the AI.** With people in view all day, checks queue up on
+  a processor. If alerts come too late, add `BRIDGE_CHECK_COOLDOWN=120` (or `BRIDGE_MIN_PEOPLE=2` to
+  skip single passers-by) to `backend/.env`.
 - **Leave it running:** the PC must stay on, with Docker Desktop, Ollama and the Part 4 window open.
   Turn off sleep in Windows power settings.
 
