@@ -57,6 +57,10 @@ docker compose up -d
 docker exec vigilinx-ollama ollama pull qwen3-vl:4b
 ```
 
+If `ollama pull` fails because Ollama's download server (registry.ollama.ai) is blocked,
+install the same model from Docker Hub instead:
+`OLLAMA_CONTAINER=vigilinx-ollama ./scripts/import_qwen_from_dockerhub.sh`.
+
 Check Frigate at `http://<server-ip>:8971`. The first login password is printed in
 `docker logs vigilinx-frigate`. Draw object masks there over areas you want ignored.
 

@@ -135,7 +135,8 @@ class OllamaVerifier:
             wanted = self.model if ":" in self.model else f"{self.model}:latest"
             self._available = wanted in names
             if not self._available:
-                logger.warning("Ollama is running but model %s is not pulled. Run: ollama pull %s",
+                logger.warning("Ollama is running but model %s is not pulled. Run: ollama pull %s "
+                               "(if that is blocked: deploy/frigate/scripts/import_qwen_from_dockerhub.sh)",
                                self.model, self.model)
         except Exception as e:
             logger.warning("Ollama not reachable at %s: %s", self.base_url, e)

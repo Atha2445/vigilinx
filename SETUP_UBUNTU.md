@@ -131,6 +131,13 @@ ollama pull qwen3-vl:4b
 
 Ollama installs itself as a background service that starts on boot.
 
+If `ollama pull` fails (some office or ISP networks block Ollama's download server), get the same
+model from Docker Hub instead:
+
+```bash
+~/vigilinx/deploy/frigate/scripts/import_qwen_from_dockerhub.sh
+```
+
 ## Part 6 — Set up Frigate (the camera system)
 
 ```bash
@@ -270,5 +277,5 @@ Also stop Ubuntu from sleeping: *Settings → Power → Automatic Suspend → Of
 | Logged out every time the app restarts | `JWT_SECRET_KEY` isn't set in `backend/.env` (Part 3). |
 | `address already in use` on port 8000 | It's already running (maybe as the Part 8 service): `sudo systemctl stop vigilinx`. |
 | Status shows `"mqtt_connected": false` | Frigate isn't running: `cd ~/vigilinx/deploy/frigate/cpu && docker compose up -d`. |
-| Status shows `"available": false` under `"verifier"` | `ollama pull qwen3-vl:4b`, and check `systemctl status ollama`. |
+| Status shows `"available": false` under `"verifier"` | `ollama pull qwen3-vl:4b` (or, if that fails, `deploy/frigate/scripts/import_qwen_from_dockerhub.sh`), and check `systemctl status ollama`. |
 | `"clip_failures"` keeps rising | Recording isn't working: check the camera's `record` stream path in `config/config.yml`. |
