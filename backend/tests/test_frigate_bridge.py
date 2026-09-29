@@ -338,3 +338,30 @@ def test_image_size_setting_shrinks_frames(monkeypatch):
     v.verify([np.zeros((1080, 1920, 3), np.uint8)], "fight_verify")
     img = cv2.imdecode(np.frombuffer(b64.b64decode(sent["messages"][0]["images"][0]), np.uint8), cv2.IMREAD_COLOR)
     assert max(img.shape[:2]) == 512 and sent["timeout"] == 300
+
+
+def test_fight_check_without_dog_verifies_animal_hits_as_fight(tmp_path):
+    # Tangled bodies in a scuffle can look like a dog to the engine; if Frigate
+    # saw no dog, the verifier must be asked about a fight, not a dog attack.
+    v = FakeVerifier(CONFIRM)
+    b, _ = bridge(FakeEngine("ANIMAL_ASSAULT"), v, tmp_path)
+    out = b.process_job(Job("gate", "FIGHT", 1000.0, [], dog_seen=False))
+    assert out["threat"] == "FIGHT_ASSAULT" and v.calls[0][1] == "fight_verify"
+
+
+def test_fight_check_with_dog_keeps_animal_assault(tmp_path):
+    v = FakeVerifier(CONFIRM)
+    b, _ = bridge(FakeEngine("ANIMAL_ASSAULT"), v, tmp_path)
+    out = b.process_job(Job("gate", "FIGHT", 1000.0, [], dog_seen=True))
+    assert out["threat"] == "ANIMAL_ASSAULT" and v.calls[0][1] == "animal_assault_verify"
+
+
+def test_queued_job_records_whether_frigate_saw_a_dog(tmp_path):
+    b, _ = bridge(FakeEngine(), FakeVerifier(CONFIRM), tmp_path)
+    b.handle_event(ev("p1", "person"))
+    jobs = b.handle_event(ev("p2", "person"))
+    assert [j.kind for j in jobs] == ["FIGHT"] and jobs[0].dog_seen is False
+    b2, _ = bridge(FakeEngine(), FakeVerifier(CONFIRM), tmp_path)
+    for oid, label in (("p1", "person"), ("p2", "person"), ("d1", "dog")):
+        jobs = b2.handle_event(ev(oid, label))
+    assert jobs and all(j.dog_seen for j in jobs)

@@ -176,6 +176,7 @@ class Job:
     trigger_time: float
     frigate_ids: List[str]
     knife_score: float = 0.0
+    dog_seen: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +311,8 @@ class FrigateBridge:
                 self._last_check[key] = now
                 self._pending.add(key)
             knife = max((o["score"] for o in objs if o["label"] == "knife"), default=0.0)
-            job = Job(camera, kind, now, [o["id"] for o in objs], knife_score=knife)
+            job = Job(camera, kind, now, [o["id"] for o in objs], knife_score=knife,
+                      dog_seen=any(o["label"] == "dog" for o in objs))
             try:
                 self._jobs.put_nowait(job)
                 self.stats["checks_queued"] += 1
@@ -482,6 +484,14 @@ class FrigateBridge:
         # Vigilinx weapon model missed it (knives are small on CCTV).
         if job.kind == "WEAPON" and "WEAPON" not in hits and job.knife_score > 0:
             hits["WEAPON"] = []
+        # The engine turns any low-confidence "animal" touching a person into an
+        # animal assault and then drops its fight hits; in a scuffle, tangled
+        # bodies are often mistaken for a dog. Frigate's own dog tracking decides
+        # whether there is a dog: if it saw none, those hits are the fight.
+        if job.kind == "FIGHT" and not job.dog_seen and "FIGHT_ASSAULT" not in hits:
+            animal = hits.pop("ANIMAL_ASSAULT", []) + hits.pop("DOG_ATTACK", [])
+            if animal:
+                hits["FIGHT_ASSAULT"] = sorted(animal, key=lambda h: h[0])
         present = [t for t in THREAT_PRIORITY if t in hits]
         if not present:
             return None
