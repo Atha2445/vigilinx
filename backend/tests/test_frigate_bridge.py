@@ -216,6 +216,26 @@ def test_logs_to_detections_table(tmp_path):
     assert rows == [("LIVE FIGHT_ASSAULT [confirmed] on gate", 1)]
 
 
+def test_alert_adds_dashboard_verdict(tmp_path):
+    import json
+    import sqlite3
+    db = str(tmp_path / "t.db")
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE video_verdicts (id INTEGER PRIMARY KEY, video_path TEXT, total_analyzed INT,"
+                 " suspicious_frames INT, normal_frames INT, suspicious_percentage REAL, risk_level TEXT,"
+                 " needs_attention INT, recommendation TEXT, ai_summary TEXT, timestamp TEXT)")
+    conn.commit()
+    conn.close()
+    b, _ = bridge(FakeEngine("FIGHT_ASSAULT"), FakeVerifier(DOWN), tmp_path)
+    b.db_path = db
+    b.process_job(Job("gate", "FIGHT", 1000.0, []))
+    path, risk, attn, details = sqlite3.connect(db).execute(
+        "SELECT video_path, risk_level, needs_attention, details_json FROM video_verdicts").fetchone()
+    assert path.startswith("incident_gate_1000_fight_assault") and risk.startswith("[CRITICAL]") and attn == 1
+    details = json.loads(details)
+    assert details["final_incident"] == "FIGHT_ASSAULT" and details["vlm_verified"] is False
+
+
 # ---- Ollama verifier --------------------------------------------------------
 
 class _Resp:

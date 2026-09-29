@@ -65,6 +65,14 @@ THREAT_TITLE = {
     "FIGHT_ASSAULT": "Fight in progress",
     "FIRE_SMOKE": "Fire or smoke",
 }
+# (final_incident, title, icon) as the dashboard's incident cards expect them
+DASHBOARD_INCIDENT = {
+    "WEAPON": ("WEAPON", "Weapon Detected", "🗡️"),
+    "ANIMAL_ASSAULT": ("ANIMAL_ASSAULT", "Animal Assault (Dog Attack)", "🐕"),
+    "DOG_ATTACK": ("ANIMAL_ASSAULT", "Animal Assault (Dog Attack)", "🐕"),
+    "FIGHT_ASSAULT": ("FIGHT_ASSAULT", "Physical Altercation / Fight", "🥊"),
+    "FIRE_SMOKE": ("FIRE_SMOKE", "Fire & Smoke Hazard", "🔥"),
+}
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -527,6 +535,7 @@ class FrigateBridge:
             clip_keep = None
 
         self._log_db(job.camera, threat, conf, is_alert=True, note=status, path=clip_keep)
+        self._log_verdict(job.camera, threat, status, verdict, ts, clip_keep)
         self.stats["last_incident"] = {"camera": job.camera, "threat": threat, "status": status,
                                        "time": ts, "reasoning": verdict.get("reasoning", "")}
         logger.warning("[%s] ALERT %s (%s)", job.camera, threat, status)
@@ -559,3 +568,44 @@ class FrigateBridge:
             conn.close()
         except Exception as e:
             logger.error("Could not log incident: %s", e)
+
+    def _log_verdict(self, camera: str, threat: str, status: str, verdict: Dict[str, Any], ts: str,
+                     path: Optional[str]):
+        """Add the alert to video_verdicts, which the dashboard's counts and incident cards read."""
+        if not self.db_path:
+            return
+        final, title, icon = DASHBOARD_INCIDENT.get(threat, (threat, THREAT_TITLE.get(threat, threat), "🚨"))
+        confirmed = status == "confirmed"
+        conf = float(verdict.get("confidence", 0.0)) if confirmed else 0.0
+        what = f"Live camera {camera} at {ts}: {THREAT_TITLE.get(threat, threat).lower()}. "
+        if confirmed:
+            what += f"Confirmed by {verdict.get('model_used') or 'the AI verifier'}: {verdict.get('reasoning', '')}".strip()
+        else:
+            what += "Flagged by the camera detectors; the AI verifier was offline, so this was not double-checked."
+        risk = "[CRITICAL] Immediate Action Required"
+        recommendation = "Check the camera and the saved clip now." if confirmed else \
+            "Review the saved clip to confirm before acting."
+        details = {
+            "narrative_summary": what,
+            "human_summary": {"what_happened": what, "final_incident": final, "title": title,
+                              "incident_icon": icon, "risk_level": risk, "recommendation": recommendation,
+                              "time_of_incident": ts, "vlm_verified": confirmed, "vlm_confidence": conf},
+            "final_incident": final, "incident_title": title, "incident_icon": icon,
+            "vlm_verified": confirmed, "vlm_confidence": conf,
+        }
+        try:
+            conn = sqlite3.connect(self.db_path)
+            try:
+                conn.execute("ALTER TABLE video_verdicts ADD COLUMN details_json TEXT")
+            except sqlite3.OperationalError:
+                pass
+            conn.execute(
+                "INSERT INTO video_verdicts (video_path, total_analyzed, suspicious_frames, normal_frames, "
+                "suspicious_percentage, risk_level, needs_attention, recommendation, ai_summary, details_json, "
+                "timestamp) VALUES (?, 1, 1, 0, 100.0, ?, 1, ?, ?, ?, datetime('now'))",
+                (os.path.basename(path) if path else f"frigate://{camera}", risk, recommendation, what,
+                 json.dumps(details)))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error("Could not save incident verdict: %s", e)
